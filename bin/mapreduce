@@ -1,0 +1,94 @@
+#!/bin/bash
+
+set -Eeuo pipefail
+#set -x
+
+shutdown(){
+    # Detect GNU vs BSD netcat. We need netcat to close the connection after
+    # sending a message, which requires different options.
+    set +o pipefail  # Avoid erroneous failures due to grep returning non-zero
+    if nc -h 2>&1 | grep -q "\-c"; then
+        NC="nc -c"
+    elif nc -h 2>&1 | grep -q "\-N"; then
+        NC="nc -N"
+    elif nc -h 2>&1 | grep -q "\-C"; then
+        NC="nc -C"
+    else
+        echo "Error detecting netcat version."
+        exit 1
+    fi
+    set -o pipefail
+
+    echo '{"message_type": "shutdown"}' | $NC localhost 6000 || true
+    sleep 2  # give the manager time to receive signal and send to workers
+}
+
+kill_manager(){
+    echo "killing mapreduce manager ..."
+    pkill -f mapreduce-manager || true
+}
+
+kill_worker(){
+    echo "killing mapreduce worker ..."
+    pkill -f mapreduce-worker || true
+}
+
+stop(){
+    echo "stopping mapreduce ..."
+    shutdown
+    if pgrep -f mapreduce-manager; then
+        kill_manager
+    fi
+    if pgrep -f mapreduce-worker; then
+        kill_worker
+    fi
+}
+
+start(){
+    if pgrep -f mapreduce-manager; then
+        echo "Error: mapreduce-manager is already running"
+        exit 1
+    fi
+    if pgrep -f mapreduce-worker; then
+        echo "Error: mapreduce-worker is already running"
+        exit 1
+    fi
+    echo "starting mapreduce ..."
+    mapreduce-manager 6000 5999 &
+    sleep 2
+    mapreduce-worker 6000 5999 6001 &
+    mapreduce-worker 6000 5999 6002 &
+}
+
+status(){
+    if pgrep -f mapreduce-manager; then
+        echo "manager running"
+    else
+        echo "manager not running"
+    fi
+    if pgrep -f mapreduce-worker; then
+        echo "worker running"
+    else
+        echo "worker not running"
+    fi
+}
+
+case $1 in
+  	"start")
+	  	start
+	  	;;
+	"stop")
+		stop
+		;;
+    "status")
+		status
+        ;;
+    "restart")
+		stop
+        start
+		;;
+  	*)
+    	usage
+    	exit 1
+    	;;
+esac
